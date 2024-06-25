@@ -3,12 +3,10 @@
 
 #include <stdint.h>
 
-#define DISPLAY_SPI_FREQUENCY 32000000
+#define DISPLAY_SPI_FREQUENCY 75000000
 #define DISPLAY_SPI_MODE 0
 #define DISPLAY_WIDTH  320
 #define DISPLAY_HEIGHT 240
-// the number of data bytes that can be send in one call to spi write
-#define DISPLAY_TRANSFER_BUFFER_SIZE 4096
 
 /// --- Display Commands ---
 
