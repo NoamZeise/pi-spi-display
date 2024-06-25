@@ -1,10 +1,13 @@
 CC := gcc
-CFLAGS := -g
+# g - debug symbols MD - write source dependancies to .d
+CFLAGS := -g -MD
 BUILD_DIR := ./build
 
 LIBS := -l wiringPi
 SRCS := $(wildcard src/*.c)
 OBJS := $(SRCS:%=$(BUILD_DIR)/%.o)
+# pull in object depenedencies
+-include $(OBJS:.o=.d)
 
 EXEC := $(BUILD_DIR)/display
 
