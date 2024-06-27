@@ -12,6 +12,13 @@
 #include "pi_wiring_consts.h"
 #include "time.h"
 
+#include <fcntl.h>
+#include <linux/fb.h>
+#include <sys/mman.h>
+
+#include <X11/Xlib.h>
+#include <X11/Xutil.h>
+
 int spi_handle = -1;
 
 void msleep(unsigned int ms) { usleep(ms * 1000); }
@@ -112,8 +119,13 @@ int main() {
   send_command(COLOUR_FORMAT_SET);
   send_byte(0x55);
 
-  screen_address_set(COLUMN_ADDRESS_SET, 0, DISPLAY_HEIGHT);
-  screen_address_set(ROW_ADDRESS_SET, 0, DISPLAY_WIDTH);	
+  screen_address_set(COLUMN_ADDRESS_SET, 0, DISPLAY_WIDTH);
+  screen_address_set(ROW_ADDRESS_SET, 0, DISPLAY_HEIGHT);
+
+  send_command(MEMORY_ACCESS_CONTROL);
+  send_byte(0b10100000);
+
+  send_command(INVERT_ON);
 
   send_command(WRITE_RAM);
   int size = DISPLAY_WIDTH * DISPLAY_HEIGHT * 2;
@@ -127,8 +139,50 @@ int main() {
   int px = 0, py = 0, pw = 50, ph = 50;
   int dx = 1, dy = 1;
 
+  Display *display = XOpenDisplay(":0");
+  
+  if (display) {
+    Window win = DefaultRootWindow(display);
+
+    XWindowAttributes xwa;
+    XGetWindowAttributes(display, win, &xwa);
+    printf("%d x %d %d bits\n", xwa.width, xwa.height, xwa.depth);
+    
+    for (;;) {
+      XImage *img = XGetImage(display, win, 0, 0, 320, 240, AllPlanes, ZPixmap);
+      //      printf("%d %x %x %x\n", img->bits_per_pixel, img->red_mask, img->green_mask, img->blue_mask);
+      for(int i = 0; i < DISPLAY_HEIGHT * DISPLAY_WIDTH; i++) {
+	uint16_t c = ((img->data[i*4 + 0] & 0b11111000) << 8)
+	  | ((img->data[i*4 + 1] & 0b11111100) << 3)
+	  | ((img->data[i*4 + 2] & 0b11111000) >> 3);
+	data[i*2] = c >> 8;
+	data[i*2 + 1] = c;
+      }
+      //memcpy(data, img->data, size);
+      XDestroyImage(img);
+      
+      send_command(WRITE_RAM);
+      send_buffer(data, size);
+      send_command(NO_OPERATION);
+    }
+    XCloseDisplay(display);
+  } else {
+    printf("failed to open display %d\n", display);
+  int fb = open("/dev/fb0", O_RDONLY);
+  if (fb < 0) {
+    printf("failed to open display framebuffer, %s\n", strerror(errno));
+    exit(-1);
+  }
+
+  uint8_t *screen_data =
+      mmap(0, size, PROT_READ, MAP_SHARED, fb, 0);
+  if (screen_data == MAP_FAILED) {
+    printf("failed to map display data to buffer%s\n", strerror(errno));
+    exit(-1);
+  }
+
   for (;;) {
-    memset(data, 0xFF, size);
+    /*memset(data, 0xFF, size);
     px += dx;
     py += dy;
 
@@ -140,18 +194,21 @@ int main() {
     for (int x = px; x < px + pw; x++) {
       for (int y = py; y < py + ph; y++) {
         int col = ((x - px)/2 << 11) & 0b1111100000000000 |
-                  (y - py)/2 << 5 & 0b0000011111100000;                 
+                  (y - py)/2 << 5 & 0b0000011111100000;
           data[x * DISPLAY_HEIGHT * 2 + y * 2] = col >> 8;
           data[x * DISPLAY_HEIGHT * 2 + y * 2 + 1] = col;
         }
-    }
+        }*/
+    memcpy(data, screen_data, size);
 	
     send_command(WRITE_RAM);
     send_buffer(data, size);
     send_command(NO_OPERATION);
   }
+      }
 
   printf("done!\n");
+  
   sleep(1);    
 
   digitalWrite(BACKLIGHT_PIN, LOW);

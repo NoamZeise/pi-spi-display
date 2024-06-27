@@ -3,7 +3,7 @@ CC := gcc
 CFLAGS := -g -MD
 BUILD_DIR := ./build
 
-LIBS := -l wiringPi
+LIBS := -l wiringPi -l X11
 SRCS := $(wildcard src/*.c)
 OBJS := $(SRCS:%=$(BUILD_DIR)/%.o)
 # pull in object depenedencies
