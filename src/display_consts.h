@@ -5,8 +5,6 @@
 
 #define DISPLAY_SPI_FREQUENCY 75000000
 #define DISPLAY_SPI_MODE 0
-#define DISPLAY_WIDTH  320
-#define DISPLAY_HEIGHT 240
 
 /// --- Display Commands ---
 
@@ -38,6 +36,8 @@ enum display_command_byte {
   IDLE_MODE_ON = 0x39,
 
   COLOUR_FORMAT_SET = 0x3a,
+
+  WRITE_RAM_CONTINUE = 0x3c,
 
   DISPLAY_BRIGHTNESS_SET = 0x51,
   DISPLAY_BRIGHTNESS_CONTROL = 0x53,

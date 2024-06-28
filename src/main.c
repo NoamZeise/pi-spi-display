@@ -105,6 +105,9 @@ void init_wiring_pi() {
   pinMode(BACKLIGHT_PIN, OUTPUT);
 }
 
+#define DISPLAY_WIDTH  320
+#define DISPLAY_HEIGHT 240
+
 int main() {
   init_wiring_pi(); 
 

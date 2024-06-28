@@ -20,7 +20,7 @@ void raw_send_buffer(uint8_t *buff, unsigned int size);
 
 void send_byte(uint8_t b) { raw_send_buffer(&b, 1); }
 
-void send_2_bytes(uint16_t data);
+void send_4_bytes(uint16_t d1, uint16_t d2);
 
 void send_command(enum display_command_byte cmd);
 
@@ -37,11 +37,17 @@ typedef struct display_state_t {
   enum display_option invert;
   // is partial mode enabled
   enum display_option partial_mode;
+  // true when x is column address
+  enum display_option horizontal;
+  enum display_option little_endian;
+
+  enum display_colour_format colour_format;
+  int bits_per_pixel;
   // current draw area
   uint16_t column_start;
-  uint16_t column_end;
+  uint16_t column_width;
   uint16_t row_start;
-  uint16_t row_end;
+  uint16_t row_width;  
 } display_state_t;
 
 static display_state_t display_state;
@@ -82,6 +88,13 @@ void display_hardware_reset() {
   digitalWrite(RESET_PIN, HIGH);
   msleep(10);
   reset_display_state();
+}
+
+void display_set_backlight(enum display_option option) {
+  if (option == DISPLAY_ENABLE)
+    digitalWrite(BACKLIGHT_PIN, HIGH);
+  else
+    digitalWrite(BACKLIGHT_PIN, LOW);
 }
 
 void display_software_reset() {
@@ -133,8 +146,7 @@ void display_set_partial(uint16_t start, uint16_t end) {
     send_command(PARTIAL_MODE);
   display_state.partial_mode = DISPLAY_ENABLE;
   send_command(PARTIAL_AREA_SET);
-  send_2_bytes(start);
-  send_2_bytes(end);
+  send_4_bytes(start, end);
 }
 
 void display_disable_partial() {
@@ -144,8 +156,73 @@ void display_disable_partial() {
   display_state.partial_mode = DISPLAY_DISABLE;
 }
 
-void display_set_draw_area(int x, int y, int w, int h) {
-  
+void display_set_address_options(enum display_address_flags flags) {
+  send_command(MEMORY_ACCESS_CONTROL);
+  send_byte(flags);
+  display_state.horizontal = ((flags & ADDRESS_SWAP_COLOUR_ORDER) > 0);
+  enum display_option little_endian = ((flags & ADDRESS_COLOUR_LITTLE_ENDIAN) > 0);
+  if (little_endian == display_state.little_endian)
+    return;
+  send_command(RAM_CONTROL);
+  uint8_t data[2];
+  // default state of ram control, just changing endianess bit
+  data[0] = 0x00;
+  data[1] = 0xF0 | (little_endian ? 0b00001000 : 0);
+  send_buffer(data, 2);
+  display_state.little_endian = little_endian;
+}
+
+void display_set_colour_format(enum display_colour_format format) {
+  if (format == display_state.colour_format)
+    return;
+  send_command(COLOUR_FORMAT_SET);
+  send_byte(format);
+  display_state.colour_format = format;
+  switch (display_state.colour_format) {
+  case COLOUR_FORMAT_12_BIT:
+    display_state.bits_per_pixel = 12;
+  case COLOUR_FORMAT_16_BIT:
+    display_state.bits_per_pixel = 16;
+  case COLOUR_FORMAT_18_BIT:
+    display_state.bits_per_pixel = 24;
+  }
+}
+
+void send_draw_area(uint16_t column_start, uint16_t column_width, uint16_t column_max,
+                    uint16_t row_start,    uint16_t row_width,    uint16_t row_max);
+
+void display_set_draw_area(uint16_t x, uint16_t y, uint16_t w, uint16_t h) {
+  if (display_state.horizontal)
+    send_draw_area(x, w, DISPLAY_WIDTH, y, h, DISPLAY_HEIGHT);
+  else
+    send_draw_area(y, h, DISPLAY_HEIGHT, x, w, DISPLAY_WIDTH);
+}
+
+void display_draw(uint8_t *colour_data, unsigned int size,
+                  enum display_option reset_draw_location,
+                  enum display_option flush_immediately) {
+  if (size * 8 > (unsigned int)display_state.column_width
+      * display_state.row_width
+      * display_state.bits_per_pixel) {
+    fprintf(stderr,
+            "colour data passed was greater than display area (%d by %d)\n",
+            display_state.column_width, display_state.row_width);
+    return;
+  }
+  if (size * 8 % display_state.bits_per_pixel != 0) {
+    fprintf(stderr,
+            "colour data passed did not have a whole number of pixels!"
+            "pixel width: %d bits, bits passed: %d\n",
+            display_state.bits_per_pixel, size * 8);
+    return;
+  }
+  if (reset_draw_location == DISPLAY_ENABLE)
+    send_command(WRITE_RAM);
+  else
+    send_command(WRITE_RAM_CONTINUE);
+  send_buffer(colour_data, size);
+  if (flush_immediately == DISPLAY_ENABLE)
+    send_command(NO_OPERATION);
 }
 
 
@@ -158,10 +235,15 @@ void reset_display_state() {
   display_state.invert = DISPLAY_DISABLE;
   display_state.last_sleep_change = time_zero();
   display_state.partial_mode = DISPLAY_DISABLE;
+  display_state.horizontal = DISPLAY_DISABLE;
+  display_state.little_endian = DISPLAY_DISABLE;
+  display_state.colour_format = COLOUR_FORMAT_18_BIT;
+  display_state.bits_per_pixel = 24;
+  
   display_state.column_start = 0;
-  display_state.column_end = 0;
+  display_state.column_width = 0;
   display_state.row_start = 0;
-  display_state.row_end = 0;
+  display_state.row_width = 0;
 }
 
 void raw_send_buffer(uint8_t *buff, unsigned int size) {
@@ -170,9 +252,16 @@ void raw_send_buffer(uint8_t *buff, unsigned int size) {
   }
 }
 
-void send_2_bytes(uint16_t data) {
-  send_byte(data >> 8);
-  send_byte(data);
+void fill_2_bytes(uint8_t *arr, uint16_t data) {
+  arr[0] = data >> 8;
+  arr[1] = data;
+}
+
+void send_4_bytes(uint16_t d1, uint16_t d2) {
+  uint8_t data[4];
+  fill_2_bytes(data, d1);
+  fill_2_bytes(&data[2], d2);
+  send_buffer(data, 4);
 }
 
 void command_mode() { digitalWrite(DATA_COMMAND_PIN, LOW); }
@@ -202,4 +291,29 @@ void send_buffer(uint8_t *buff, unsigned int size) {
            &buff[transfers * SPI_BUFFER_SIZE], remainder);
     raw_send_buffer(display_transfer_buffer, remainder);
   }
+}
+
+
+int check_dimension_invalid(uint16_t start, uint16_t size, uint16_t max) {
+  return start > max || (unsigned int)start + size > max;
+}
+
+void send_draw_area(uint16_t column_start, uint16_t column_width, uint16_t column_max,
+                    uint16_t row_start,    uint16_t row_width,    uint16_t row_max) {
+  if (check_dimension_invalid(column_start, column_width, column_max) ||
+      check_dimension_invalid(row_start, row_width, row_max)) {
+    fprintf(stderr,
+            "Draw Area out of range! screen is %d by %d "
+            "draw area is %d+%d by %d+%d",
+            column_max, row_max, column_start, column_width, row_start, row_width);    
+    return;
+  }
+  display_state.column_start = column_start;
+  display_state.column_width = column_width;
+  display_state.row_start = row_start;
+  display_state.row_width = row_width;
+  send_command(COLUMN_ADDRESS_SET);
+  send_4_bytes(column_start, column_start + column_width);
+  send_command(ROW_ADDRESS_SET);
+  send_4_bytes(row_start, row_start + row_width);
 }
