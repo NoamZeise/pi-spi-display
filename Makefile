@@ -4,7 +4,7 @@ CFLAGS := -g -MD
 BUILD_DIR := ./build
 
 LIBS := -l wiringPi -l X11
-SRCS := src/main.c # $(wildcard src/*.c)
+SRCS := $(wildcard src/*.c)
 OBJS := $(SRCS:%=$(BUILD_DIR)/%.o)
 # pull in object depenedencies
 -include $(OBJS:.o=.d)

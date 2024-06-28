@@ -58,7 +58,7 @@ void reset_display_state();
 /// ---- Api Implementation ----
 
 
-int display_init() {
+int display_open() {
   int result = wiringPiSetupGpio();
   if (result) {
     fprintf(stderr, "Failed to init pi gpio pins: %s\n", strerror(errno));
@@ -78,7 +78,7 @@ int display_init() {
   return 0;
 }
 
-void display_free() {
+void display_close() {
   wiringPiSPIxClose(SPI_CHIP_ENABLE, SPI_CHANNEL);
 }
 
@@ -90,7 +90,7 @@ void display_hardware_reset() {
   reset_display_state();
 }
 
-void display_set_backlight(enum display_option option) {
+void display_backlight(enum display_option option) {
   if (option == DISPLAY_ENABLE)
     digitalWrite(BACKLIGHT_PIN, HIGH);
   else
@@ -103,7 +103,7 @@ void display_software_reset() {
   reset_display_state();
 }
 
-void display_set_sleep(enum display_option state) {
+void display_sleep(enum display_option state) {
   if (state == display_state.sleep_mode)
     return;
   time_point t;
@@ -159,7 +159,7 @@ void display_disable_partial() {
 void display_set_address_options(enum display_address_flags flags) {
   send_command(MEMORY_ACCESS_CONTROL);
   send_byte(flags);
-  display_state.horizontal = ((flags & ADDRESS_SWAP_COLOUR_ORDER) > 0);
+  display_state.horizontal = ((flags & ADDRESS_HORIZONTAL_ORIENTATION) > 0);
   enum display_option little_endian = ((flags & ADDRESS_COLOUR_LITTLE_ENDIAN) > 0);
   if (little_endian == display_state.little_endian)
     return;
@@ -179,12 +179,18 @@ void display_set_colour_format(enum display_colour_format format) {
   send_byte(format);
   display_state.colour_format = format;
   switch (display_state.colour_format) {
+  default:
+    fprintf(stderr, "unrecognised colour format!\n");
+    exit(-1);
   case COLOUR_FORMAT_12_BIT:
     display_state.bits_per_pixel = 12;
+    break;
   case COLOUR_FORMAT_16_BIT:
     display_state.bits_per_pixel = 16;
+    break;
   case COLOUR_FORMAT_18_BIT:
     display_state.bits_per_pixel = 24;
+    break;    
   }
 }
 
@@ -193,35 +199,41 @@ void send_draw_area(uint16_t column_start, uint16_t column_width, uint16_t colum
 
 void display_set_draw_area(uint16_t x, uint16_t y, uint16_t w, uint16_t h) {
   if (display_state.horizontal)
-    send_draw_area(x, w, DISPLAY_WIDTH, y, h, DISPLAY_HEIGHT);
+    send_draw_area(x, w, DISPLAY_HORIZONTAL, y, h, DISPLAY_VERTICAL);
   else
-    send_draw_area(y, h, DISPLAY_HEIGHT, x, w, DISPLAY_WIDTH);
+    send_draw_area(x, w, DISPLAY_VERTICAL, y, h, DISPLAY_HORIZONTAL);
+}
+
+void display_set_draw_area_full() {
+  if (display_state.horizontal)
+    display_set_draw_area(0, 0, DISPLAY_HORIZONTAL, DISPLAY_VERTICAL);
+  else  
+    display_set_draw_area(0, 0, DISPLAY_VERTICAL, DISPLAY_HORIZONTAL);
 }
 
 void display_draw(uint8_t *colour_data, unsigned int size,
-                  enum display_option reset_draw_location,
-                  enum display_option flush_immediately) {
+                  enum display_draw_flags flags) {  
   if (size * 8 > (unsigned int)display_state.column_width
       * display_state.row_width
       * display_state.bits_per_pixel) {
     fprintf(stderr,
-            "colour data passed was greater than display area (%d by %d)\n",
+            "colour data passed was greater than draw area (%d by %d)\n",
             display_state.column_width, display_state.row_width);
-    return;
+    exit(-1);
   }
   if (size * 8 % display_state.bits_per_pixel != 0) {
     fprintf(stderr,
             "colour data passed did not have a whole number of pixels!"
             "pixel width: %d bits, bits passed: %d\n",
             display_state.bits_per_pixel, size * 8);
-    return;
+    exit(-1);
   }
-  if (reset_draw_location == DISPLAY_ENABLE)
-    send_command(WRITE_RAM);
-  else
+  if (flags & DONT_RESET_DRAW_LOCATION)
     send_command(WRITE_RAM_CONTINUE);
+  else
+    send_command(WRITE_RAM);
   send_buffer(colour_data, size);
-  if (flush_immediately == DISPLAY_ENABLE)
+  if (!(flags & DONT_FLUSH_DRAW))
     send_command(NO_OPERATION);
 }
 
@@ -295,7 +307,7 @@ void send_buffer(uint8_t *buff, unsigned int size) {
 
 
 int check_dimension_invalid(uint16_t start, uint16_t size, uint16_t max) {
-  return start > max || (unsigned int)start + size > max;
+  return size == 0 | start > max || (unsigned int)start + size > max;
 }
 
 void send_draw_area(uint16_t column_start, uint16_t column_width, uint16_t column_max,
@@ -304,16 +316,16 @@ void send_draw_area(uint16_t column_start, uint16_t column_width, uint16_t colum
       check_dimension_invalid(row_start, row_width, row_max)) {
     fprintf(stderr,
             "Draw Area out of range! screen is %d by %d "
-            "draw area is %d+%d by %d+%d",
+            "draw area is %d+%d by %d+%d\n",
             column_max, row_max, column_start, column_width, row_start, row_width);    
-    return;
+    exit(-1);
   }
   display_state.column_start = column_start;
   display_state.column_width = column_width;
   display_state.row_start = row_start;
   display_state.row_width = row_width;
   send_command(COLUMN_ADDRESS_SET);
-  send_4_bytes(column_start, column_start + column_width);
+  send_4_bytes(column_start, column_start + column_width - 1);
   send_command(ROW_ADDRESS_SET);
-  send_4_bytes(row_start, row_start + row_width);
+  send_4_bytes(row_start, row_start + row_width - 1);
 }
