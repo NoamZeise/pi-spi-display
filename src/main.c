@@ -48,21 +48,21 @@ void send_command(uint8_t cmd) {
   data_mode();
 }
 
-static uint8_t display_transfer_buffer[DISPLAY_TRANSFER_BUFFER_SIZE];
+static uint8_t display_transfer_buffer[SPI_BUFFER_SIZE];
 
 void send_buffer(uint8_t *buff, unsigned int size) {
   if (size == 0)
     return;
-  int transfers = size / DISPLAY_TRANSFER_BUFFER_SIZE;
-  int remainder = size - (transfers * DISPLAY_TRANSFER_BUFFER_SIZE);
+  int transfers = size / SPI_BUFFER_SIZE;
+  int remainder = size - (transfers * SPI_BUFFER_SIZE);
   for (int i = 0; i < transfers; i++) {
-    memcpy(display_transfer_buffer, &buff[i * DISPLAY_TRANSFER_BUFFER_SIZE],
-           DISPLAY_TRANSFER_BUFFER_SIZE);
-    raw_send_buffer(display_transfer_buffer, DISPLAY_TRANSFER_BUFFER_SIZE);
+    memcpy(display_transfer_buffer, &buff[i * SPI_BUFFER_SIZE],
+           SPI_BUFFER_SIZE);
+    raw_send_buffer(display_transfer_buffer, SPI_BUFFER_SIZE);
   }
   if (remainder > 0) {
     memcpy(display_transfer_buffer,
-           &buff[transfers * DISPLAY_TRANSFER_BUFFER_SIZE], remainder);
+           &buff[transfers * SPI_BUFFER_SIZE], remainder);
     raw_send_buffer(display_transfer_buffer, remainder);
   }
 }
@@ -117,13 +117,17 @@ int main() {
   msleep(5);
 
   send_command(COLOUR_FORMAT_SET);
-  send_byte(0x55);
+  send_byte(0x55); 
 
   screen_address_set(COLUMN_ADDRESS_SET, 0, DISPLAY_WIDTH);
   screen_address_set(ROW_ADDRESS_SET, 0, DISPLAY_HEIGHT);
 
   send_command(MEMORY_ACCESS_CONTROL);
   send_byte(0b10100000);
+
+  send_command(RAM_CONTROL);
+  send_byte(0x00);
+  send_byte(0b11111000);
 
   send_command(INVERT_ON);
 
@@ -135,6 +139,7 @@ int main() {
 
   digitalWrite(BACKLIGHT_PIN, HIGH);
   send_command(DISPLAY_ON);
+  
 
   int px = 0, py = 0, pw = 50, ph = 50;
   int dx = 1, dy = 1;
@@ -150,15 +155,7 @@ int main() {
     
     for (;;) {
       XImage *img = XGetImage(display, win, 0, 0, 320, 240, AllPlanes, ZPixmap);
-      //      printf("%d %x %x %x\n", img->bits_per_pixel, img->red_mask, img->green_mask, img->blue_mask);
-      for(int i = 0; i < DISPLAY_HEIGHT * DISPLAY_WIDTH; i++) {
-	uint16_t c = ((img->data[i*4 + 0] & 0b11111000) << 8)
-	  | ((img->data[i*4 + 1] & 0b11111100) << 3)
-	  | ((img->data[i*4 + 2] & 0b11111000) >> 3);
-	data[i*2] = c >> 8;
-	data[i*2 + 1] = c;
-      }
-      //memcpy(data, img->data, size);
+      memcpy(data, img->data, size);
       XDestroyImage(img);
       
       send_command(WRITE_RAM);
