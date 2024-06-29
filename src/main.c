@@ -3,7 +3,7 @@
 #include <errno.h>
 
 #include "display.h"
-#include "time.h"
+#include "mirror.h"
 
 #include <fcntl.h>
 #include <linux/fb.h>
@@ -80,7 +80,7 @@ int main() {
   if (display_open() == -1)
     return -1;
 
-  display_software_reset();
+  display_hardware_reset();
 
   display_sleep(DISPLAY_DISABLE);
 
@@ -93,8 +93,10 @@ int main() {
 
   display_backlight(DISPLAY_ENABLE);
 
-  // test();
-  draw_screen();
+  test();
+  //draw_screen();
+
+  mirror_display();
   
   display_close();
   return 0;
