@@ -286,23 +286,15 @@ void send_command(enum display_command_byte cmd) {
   data_mode();
 }
 
-static uint8_t display_transfer_buffer[SPI_BUFFER_SIZE];
-
 void send_buffer(uint8_t *buff, unsigned int size) {
   if (size == 0)
     return;
   int transfers = size / SPI_BUFFER_SIZE;
-  int remainder = size - (transfers * SPI_BUFFER_SIZE);
-  for (int i = 0; i < transfers; i++) {
-    memcpy(display_transfer_buffer, &buff[i * SPI_BUFFER_SIZE],
-           SPI_BUFFER_SIZE);
-    raw_send_buffer(display_transfer_buffer, SPI_BUFFER_SIZE);
-  }
-  if (remainder > 0) {
-    memcpy(display_transfer_buffer,
-           &buff[transfers * SPI_BUFFER_SIZE], remainder);
-    raw_send_buffer(display_transfer_buffer, remainder);
-  }
+  int remainder = size % SPI_BUFFER_SIZE;
+  for (int i = 0; i < transfers; i++)
+    raw_send_buffer(&buff[i * SPI_BUFFER_SIZE], SPI_BUFFER_SIZE);
+  if (remainder > 0)
+    raw_send_buffer(&buff[transfers * SPI_BUFFER_SIZE], remainder);
 }
 
 
