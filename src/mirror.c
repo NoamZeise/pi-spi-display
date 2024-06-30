@@ -159,6 +159,9 @@ void mirror_display() {
   
   munmap(info.framebuffer, BUFF_SIZE);
   close(fb);
+
+  display_software_reset();
+  display_backlight(DISPLAY_DISABLE);
 }
 
 
