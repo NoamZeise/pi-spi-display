@@ -106,7 +106,7 @@ void display_software_reset() {
 void display_sleep(enum display_option state) {
   if (state == display_state.sleep_mode)
     return;
-  time_point t;
+  time_point t = get_time();
   double elapsed = real_time_s(display_state.last_sleep_change, t);
   // need to wait 120 sec after last sleep state change
   double wait = 120 - (elapsed * 1000);
@@ -237,6 +237,22 @@ void display_draw(uint8_t *colour_data, unsigned int size,
     send_command(NO_OPERATION);
 }
 
+void display_combined_setup(enum display_colour_format colour_format,
+			    enum display_address_flags address_flags) {
+  display_hardware_reset();
+  display_sleep(DISPLAY_DISABLE);
+  
+  display_set_colour_format(colour_format);
+  display_set_address_options(address_flags);
+  
+  display_invert(DISPLAY_ENABLE);
+  
+  display_set_draw_area_full();
+  
+  display_on(DISPLAY_ENABLE);
+  display_backlight(DISPLAY_ENABLE);
+}
+
 
 /// ---- Helper Definitions ----
 
@@ -299,7 +315,7 @@ void send_buffer(uint8_t *buff, unsigned int size) {
 
 
 int check_dimension_invalid(uint16_t start, uint16_t size, uint16_t max) {
-  return size == 0 | start > max || (unsigned int)start + size > max;
+  return ((size == 0) | (start > max)) || ((unsigned int)start + size > max);
 }
 
 void send_draw_area(uint16_t column_start, uint16_t column_width, uint16_t column_max,

@@ -17,17 +17,22 @@
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
 
+#define COLOUR_BYTES 2
+
+#define BUFF_SIZE DISPLAY_PIXEL_COUNT * COLOUR_BYTES
+
+#define FRAMEBUFFER_FILE "/dev/fb0"
+// pass NULL to use DISPLAY env var
+#define X_DISPLAY ":0"
+
 enum active_window {
   FRAMEBUFFER,
   X_BUFFER,
 };
 
-#define BUFF_SIZE DISPLAY_PIXEL_COUNT * 2
-
 struct manager_info_t {
   Display* display;
   Window window;
-  Atom window_delete;
   enum active_window active;
   uint8_t *framebuffer;
 };
@@ -38,58 +43,40 @@ jmp_buf x_err_env;
 // stop x server errors from killing the program
 static int x_error_handler(Display *dpy) { longjmp(x_err_env, 1); }
 
+int get_x_tty();
+int get_active_tty();
+
 void* active_screen_manager(void* info_ptr) {
   struct manager_info_t *info = info_ptr;
   int Xtty = -1;
+  int invalid_x = 0;
+  XSetIOErrorHandler(x_error_handler);
   while(!close_threads) {
     sleep(1);
-    if (info->display == NULL) {
+    if (info->display == NULL && !invalid_x) {
       Xtty = -1;
-      info->display = XOpenDisplay(":0");
+      info->display = XOpenDisplay(X_DISPLAY);
       if(info->display) {
         info->window = DefaultRootWindow(info->display);
-	info->window_delete = XInternAtom(info->display, "WM_DELETE_WINDOW", False);
-	XSetWMProtocols(info->display, info->window, &info->window_delete, 1);
 	XWindowAttributes xwa;
 	XGetWindowAttributes(info->display, info->window, &xwa);
 	if(   xwa.width  != DISPLAY_HORIZONTAL
 	   || xwa.height != DISPLAY_VERTICAL
-	   || xwa.depth  != 16) {
+	   || xwa.depth  != 8 * COLOUR_BYTES) {
 	  fprintf(stderr, "X window has unsupported format %d bit %dx%d,"
-		  " must be 16 bit 320x240\n",
-		  xwa.depth, xwa.width, xwa.height);
-	  return NULL;
+		  " must be %d bit %d x %d\n",
+		  xwa.depth, xwa.width, xwa.height,
+		  COLOUR_BYTES * 8, DISPLAY_HORIZONTAL, DISPLAY_VERTICAL);
+	  invalid_x = 1;
+	  XCloseDisplay(info->display);
+	  info->display = NULL;
+	  continue;
         }
-
-        FILE *f = popen("ps -e -o tty -o fname | grep Xorg", "r");
-	if(f != NULL) {
-	  int n = 0;
-	  char name[6];
-	  name[5] = '\0';
-          if (fgets(name, 5, f) == NULL) {
-            printf("couldn't determine which tty X is running on\n");
-	    Xtty = -1;
-	  } else {
-	    pclose(f);
-	    Xtty = name[3] - '0';
-	    //  printf("x: %d, %s\n", Xtty, name);
-	  }
-	}
+	Xtty = get_x_tty();
       }
     }
-    char name[5];
-    name[4] = '\0';
-    int t = open("/sys/class/tty/tty0/active", O_RDONLY);
-    if (t == -1) {
-      fprintf(stderr, "failed to check which tty was active %s\n", strerror(errno));
-    } else {
-      int rd = read(t, name, 4);
-      close(t);
-      if(rd == 4) {
-	int tty = name[3] - '0';
-	//	printf("%d == %d ?, %s\n", tty, Xtty, name);
-	info->active = tty == Xtty ? X_BUFFER : FRAMEBUFFER;
-      }
+    if(Xtty != -1) {
+      info->active = get_active_tty() == Xtty ? X_BUFFER : FRAMEBUFFER;
     }
   }
   if (info->display != NULL) {
@@ -99,72 +86,48 @@ void* active_screen_manager(void* info_ptr) {
   return NULL;
 }
 
-static uint8_t screen_data[BUFF_SIZE];
-
 void* screen_renderer(void* info_ptr) {
-  struct manager_info_t* info = info_ptr;  
+  struct manager_info_t* info = info_ptr;
+  uint8_t screen_data[BUFF_SIZE];
   while(!close_threads) {
     if(info->active == FRAMEBUFFER) {
       memcpy(screen_data, info->framebuffer, BUFF_SIZE);
       display_draw(screen_data, BUFF_SIZE, 0);
     } else {
-      if (info->display == NULL) {
-	fprintf(stderr, "can't draw x window with unopened display!\n");
-	return NULL;
-      }
-      if(setjmp(x_err_env)) {
-	printf("error caught\n");
-	info->display = NULL;
-        info->active = FRAMEBUFFER;
-	continue;
-      } else {
-	XImage *img = XGetImage(info->display, info->window, 0, 0, DISPLAY_HORIZONTAL, DISPLAY_VERTICAL,
+      if (info->display == NULL)
+	goto x_draw_failed;
+      if(setjmp(x_err_env))
+	goto x_draw_failed;
+      else {
+	XImage *img = XGetImage(info->display, info->window,
+				0, 0, DISPLAY_HORIZONTAL, DISPLAY_VERTICAL,
 				AllPlanes, ZPixmap);
-	if(img == NULL) {
-	  fprintf(stderr, "failed to get X image!\n");
-	  return NULL;
-	}
+	if(img == NULL)
+	  goto x_draw_failed;
 	display_draw((uint8_t*)img->data, BUFF_SIZE, 0);
 	XDestroyImage(img);
       }
+      continue;
+    x_draw_failed:
+      info->display = NULL;
+      fprintf(stderr, "Drawing X screen failed\n");
+      info->active = FRAMEBUFFER;
     }
   }
   return NULL;
 }
 
+int map_framebuffer(uint8_t** screen_data);
+
 void mirror_display() {
-  display_hardware_reset();
-  display_sleep(DISPLAY_DISABLE);
-  
-  display_set_colour_format(COLOUR_FORMAT_16_BIT);
-  display_set_address_options(
+  display_combined_setup(COLOUR_FORMAT_16_BIT,
     ADDRESS_FLIP_HORIZONTAL | ADDRESS_HORIZONTAL_ORIENTATION | ADDRESS_COLOUR_LITTLE_ENDIAN);
-  
-  display_invert(DISPLAY_ENABLE);
-  
-  display_set_draw_area_full();
-  
-  display_on(DISPLAY_ENABLE);
-  display_backlight(DISPLAY_ENABLE);
-
-  int fb = open("/dev/fb0", O_RDONLY);
-  if(fb < 0) {
-    fprintf(stderr, "Failed to open framebuffer fb0, %s\n", strerror(errno));
-    return;
-  }
-  
-  uint8_t* screen_data = mmap(0, BUFF_SIZE, PROT_READ, MAP_SHARED, fb, 0);
-  if(screen_data == MAP_FAILED) {
-    fprintf(stderr, "Failed to map screen data %s\n", strerror(errno));
-    return;
-  }
-
-  XSetIOErrorHandler(x_error_handler);
 
   struct manager_info_t info;
   info.active = FRAMEBUFFER;
   info.display = NULL;
-  info.framebuffer = screen_data;
+  int fb = map_framebuffer(&info.framebuffer);
+  if(fb == -1) return;
   
   pthread_t manager_thread, screen_renderer_thread;
   int failed = pthread_create(&manager_thread, NULL, active_screen_manager, &info);
@@ -184,14 +147,68 @@ void mirror_display() {
   int sig;
   sigprocmask(SIG_BLOCK, &sigset, NULL);
   failed = sigwait(&sigset, &sig);
-  if(failed) {
+  if(failed)
     fprintf(stderr, "failed to wait for interrupt signal! %s\n", strerror(failed));
-  }
+  
   close_threads = 1;
   
-  pthread_join(manager_thread, NULL);
-  pthread_join(screen_renderer_thread, NULL);
+  if((failed = pthread_join(manager_thread, NULL)))
+    fprintf(stderr, "failed to join manager thread %s\n", strerror(failed));
+  if((failed = pthread_join(screen_renderer_thread, NULL)))
+    fprintf(stderr, "failed to join screen render thread %s\n", strerror(failed));
   
-  munmap(screen_data, BUFF_SIZE);
+  munmap(info.framebuffer, BUFF_SIZE);
   close(fb);
+}
+
+
+/// ---- Helpers ----
+
+
+int get_active_tty() {
+  char name[5];
+  name[4] = '\0';
+  int t = open("/sys/class/tty/tty0/active", O_RDONLY);
+  if (t == -1) {
+    fprintf(stderr, "failed to check which tty was active %s\n", strerror(errno));
+  } else {
+    int rd = read(t, name, 4);
+    close(t);
+    if(rd == 4) {
+      return name[3] - '0';
+    }
+  }
+  return -1;
+}
+
+int get_x_tty() {
+  FILE *f = popen("ps -e -o tty -o fname | grep Xorg", "r");
+  if(f != NULL) {
+    char name[6];
+    name[5] = '\0';
+    if (fgets(name, 5, f) == NULL) {
+      printf("couldn't determine which tty X is running on\n");      
+    } else {
+      pclose(f);
+      return name[3] - '0';
+    }
+  } else {
+    fprintf(stderr, "failed to run command to determine x's tty\n");
+  }
+  return -1;
+}
+
+int map_framebuffer(uint8_t** screen_data) {
+  int fb = open(FRAMEBUFFER_FILE, O_RDONLY);
+  if(fb < 0) {
+    fprintf(stderr, "Failed to open framebuffer, %s\n", strerror(errno));
+    return -1;
+  }  
+  *screen_data = mmap(0, BUFF_SIZE, PROT_READ, MAP_SHARED, fb, 0);
+  if(screen_data == MAP_FAILED) {
+    fprintf(stderr, "Failed to map screen data %s\n", strerror(errno));
+    return -1;
+    close(fb);
+  }
+  return fb;
 }

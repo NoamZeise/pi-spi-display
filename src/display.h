@@ -86,4 +86,9 @@ enum display_draw_flags {
 // draw pixel data to the display, must be a whole number of pixels
 void display_draw(uint8_t *colour_data, unsigned int size, enum display_draw_flags flags);
 
+// combines prexisitng functions
+// reset, unsleep, and set up colour and address, turn on display and set full draw area
+void display_combined_setup(enum display_colour_format colour_format,
+			    enum display_address_flags address_flags);
+
 #endif
