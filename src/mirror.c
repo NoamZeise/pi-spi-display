@@ -1,9 +1,12 @@
 #include "mirror.h"
 
 #include "display.h"
+#include "time.h"
 
 #include <pthread.h>
+#include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <errno.h>
 #include <setjmp.h>
@@ -16,6 +19,7 @@
 
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
+#include <X11/extensions/dpms.h>
 
 #define COLOUR_BYTES 2
 
@@ -28,6 +32,7 @@
 enum active_window {
   FRAMEBUFFER,
   X_BUFFER,
+  SLEEPING,
 };
 
 struct manager_info_t {
@@ -35,6 +40,7 @@ struct manager_info_t {
   Window window;
   enum active_window active;
   uint8_t *framebuffer;
+  int mouse_active;
 };
 
 int close_threads = 0;
@@ -50,9 +56,11 @@ void* active_screen_manager(void* info_ptr) {
   struct manager_info_t *info = info_ptr;
   int Xtty = -1;
   int invalid_x = 0;
+  int sleeping = 0;
   XSetIOErrorHandler(x_error_handler);
   while(!close_threads) {
     sleep(1);
+    sleeping = 0;
     if (info->display == NULL && !invalid_x) {
       Xtty = -1;
       info->display = XOpenDisplay(X_DISPLAY);
@@ -72,11 +80,31 @@ void* active_screen_manager(void* info_ptr) {
 	  info->display = NULL;
 	  continue;
         }
-	Xtty = get_x_tty();
+        Xtty = get_x_tty();
       }
+    } else if(!invalid_x) {
+      CARD16 power;
+      BOOL enabled;
+      if(DPMSInfo(info->display, &power, &enabled))
+	sleeping = enabled && (power == DPMSModeOff);
     }
-    if(Xtty != -1) {
-      info->active = get_active_tty() == Xtty ? X_BUFFER : FRAMEBUFFER;
+
+    if (sleeping) {
+      if (info->active != SLEEPING) {
+        info->active = SLEEPING;
+        display_backlight(DISPLAY_DISABLE);
+        sleep(1); // wait for render thread to stop
+	display_sleep(DISPLAY_ENABLE);
+      }
+    } else {
+      if (info->active == SLEEPING) {	
+	display_sleep(DISPLAY_DISABLE);
+        display_backlight(DISPLAY_ENABLE);
+	info->active = FRAMEBUFFER;
+      }
+      if(Xtty != -1) {
+	info->active = get_active_tty() == Xtty ? X_BUFFER : FRAMEBUFFER;	
+      }
     }
   }
   if (info->display != NULL) {
@@ -89,11 +117,14 @@ void* active_screen_manager(void* info_ptr) {
 void* screen_renderer(void* info_ptr) {
   struct manager_info_t* info = info_ptr;
   uint8_t screen_data[BUFF_SIZE];
-  while(!close_threads) {
-    if(info->active == FRAMEBUFFER) {
+  while (!close_threads) {
+    if (info->active == SLEEPING) {
+      sleep(1);
+    } else if(info->active == FRAMEBUFFER) {
       memcpy(screen_data, info->framebuffer, BUFF_SIZE);
       display_draw(screen_data, BUFF_SIZE, 0);
     } else {
+      //time_point t = get_time();
       if (info->display == NULL)
 	goto x_draw_failed;
       if(setjmp(x_err_env))
@@ -103,14 +134,32 @@ void* screen_renderer(void* info_ptr) {
 				0, 0, DISPLAY_HORIZONTAL, DISPLAY_VERTICAL,
 				AllPlanes, ZPixmap);
 	if(img == NULL)
-	  goto x_draw_failed;
+          goto x_draw_failed;
+	if(info->mouse_active) {
+	  int x, y, rootx, rooty;
+	  unsigned int mask;
+	  Window root, child;
+	  XQueryPointer(info->display, info->window, &root, &child, &rootx,
+			&rooty, &x, &y, &mask);
+	  for (int xp = x; xp < x + 10 && xp < DISPLAY_HORIZONTAL;
+	       xp++) {
+	    for (int yp = y;
+		 yp < y + 10 && yp < DISPLAY_VERTICAL; yp++) {
+	      for (int b = 0; b < COLOUR_BYTES; b++) {
+		int screenp = yp * DISPLAY_HORIZONTAL * COLOUR_BYTES +
+		  xp * COLOUR_BYTES + b;
+		((uint8_t *)img->data)[screenp] = 0x00;
+	      }
+	    }
+	  }
+	  }
 	display_draw((uint8_t*)img->data, BUFF_SIZE, 0);
-	XDestroyImage(img);
+        XDestroyImage(img);
+	//print_elapsed(t);
       }
       continue;
     x_draw_failed:
       info->display = NULL;
-      fprintf(stderr, "Drawing X screen failed\n");
       info->active = FRAMEBUFFER;
     }
   }
@@ -126,8 +175,11 @@ void mirror_display() {
   struct manager_info_t info;
   info.active = FRAMEBUFFER;
   info.display = NULL;
+  info.mouse_active = 0;
   int fb = map_framebuffer(&info.framebuffer);
   if(fb == -1) return;
+
+  XInitThreads();
   
   pthread_t manager_thread, screen_renderer_thread;
   int failed = pthread_create(&manager_thread, NULL, active_screen_manager, &info);
@@ -215,3 +267,5 @@ int map_framebuffer(uint8_t** screen_data) {
   }
   return fb;
 }
+
+
