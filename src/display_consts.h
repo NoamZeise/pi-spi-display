@@ -39,7 +39,8 @@ enum display_command_byte {
 
   WRITE_RAM_CONTINUE = 0x3c,
 
-  DISPLAY_BRIGHTNESS_SET = 0x51,
+  // doesnt work on adafruit tft boards
+  //DISPLAY_BRIGHTNESS_SET = 0x51,
   DISPLAY_BRIGHTNESS_CONTROL = 0x53,
 
   RAM_CONTROL = 0xb0,

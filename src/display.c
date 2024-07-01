@@ -14,6 +14,8 @@
 #include "pi_wiring_consts.h"
 #include "time.h"
 
+#define BRIGHTNESS_CLOCK_DIVISOR 100
+
 void msleep(unsigned int ms) { usleep(ms * 1000); }
 
 void raw_send_buffer(uint8_t *buff, unsigned int size);
@@ -37,6 +39,8 @@ typedef struct display_state_t {
   enum display_option invert;
   // is partial mode enabled
   enum display_option partial_mode;
+  // is idle mode enabled
+  enum display_option idle_mode;
   // true when x is column address
   enum display_option horizontal;
   enum display_option little_endian;
@@ -67,7 +71,6 @@ int display_open() {
 
   pinMode(DATA_COMMAND_PIN, OUTPUT);
   pinMode(RESET_PIN, OUTPUT);
-  pinMode(BACKLIGHT_PIN, OUTPUT);
 
   int spi_handle = wiringPiSPIxSetupMode(
       SPI_CHIP_ENABLE, SPI_CHANNEL, DISPLAY_SPI_FREQUENCY, DISPLAY_SPI_MODE);
@@ -75,6 +78,8 @@ int display_open() {
     fprintf(stderr, "Failed to init spi: %s\n", strerror(errno));
     return -1;
   }
+  pinMode(BACKLIGHT_PIN, PWM_OUTPUT);
+  display_brightness(0);
   return 0;
 }
 
@@ -90,11 +95,13 @@ void display_hardware_reset() {
   reset_display_state();
 }
 
-void display_backlight(enum display_option option) {
-  if (option == DISPLAY_ENABLE)
-    digitalWrite(BACKLIGHT_PIN, HIGH);
-  else
-    digitalWrite(BACKLIGHT_PIN, LOW);
+void display_brightness(unsigned int brightness) {
+  if(brightness > MAX_BRIGHTNESS)
+    brightness = MAX_BRIGHTNESS;
+  pwmSetMode(PWM_MODE_MS);
+  pwmSetClock(BRIGHTNESS_CLOCK_DIVISOR);
+  pwmSetRange(MAX_BRIGHTNESS);
+  pwmWrite(BACKLIGHT_PIN, brightness);
 }
 
 void display_software_reset() {
@@ -154,6 +161,16 @@ void display_disable_partial() {
     return;
   send_command(NORMAL_MODE);
   display_state.partial_mode = DISPLAY_DISABLE;
+}
+
+void display_idle_mode(enum display_option option) {
+  if(option == display_state.idle_mode)
+    return;
+  if(option == DISPLAY_ENABLE)
+    send_command(IDLE_MODE_ON);
+  else
+    send_command(IDLE_MODE_OFF);
+  display_state.idle_mode = option;
 }
 
 void display_set_address_options(enum display_address_flags flags) {
@@ -250,7 +267,7 @@ void display_combined_setup(enum display_colour_format colour_format,
   display_set_draw_area_full();
   
   display_on(DISPLAY_ENABLE);
-  display_backlight(DISPLAY_ENABLE);
+  display_brightness(MAX_BRIGHTNESS);
 }
 
 
@@ -263,6 +280,7 @@ void reset_display_state() {
   display_state.invert = DISPLAY_DISABLE;
   display_state.last_sleep_change = time_zero();
   display_state.partial_mode = DISPLAY_DISABLE;
+  display_state.idle_mode = DISPLAY_DISABLE;
   display_state.horizontal = DISPLAY_DISABLE;
   display_state.little_endian = DISPLAY_DISABLE;
   display_state.colour_format = COLOUR_FORMAT_18_BIT;

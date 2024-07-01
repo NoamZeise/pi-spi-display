@@ -92,14 +92,14 @@ void* active_screen_manager(void* info_ptr) {
     if (sleeping) {
       if (info->active != SLEEPING) {
         info->active = SLEEPING;
-        display_backlight(DISPLAY_DISABLE);
+        display_brightness(0);
         sleep(1); // wait for render thread to stop
 	display_sleep(DISPLAY_ENABLE);
       }
     } else {
       if (info->active == SLEEPING) {	
 	display_sleep(DISPLAY_DISABLE);
-        display_backlight(DISPLAY_ENABLE);
+        display_brightness(MAX_BRIGHTNESS);
 	info->active = FRAMEBUFFER;
       }
       if(Xtty != -1) {
@@ -152,7 +152,7 @@ void* screen_renderer(void* info_ptr) {
 	      }
 	    }
 	  }
-	  }
+	}
 	display_draw((uint8_t*)img->data, BUFF_SIZE, 0);
         XDestroyImage(img);
 	//print_elapsed(t);
@@ -171,6 +171,7 @@ int map_framebuffer(uint8_t** screen_data);
 void mirror_display() {
   display_combined_setup(COLOUR_FORMAT_16_BIT,
     ADDRESS_FLIP_HORIZONTAL | ADDRESS_HORIZONTAL_ORIENTATION | ADDRESS_COLOUR_LITTLE_ENDIAN);
+  display_brightness(MAX_BRIGHTNESS/1.5);
 
   struct manager_info_t info;
   info.active = FRAMEBUFFER;
@@ -213,12 +214,11 @@ void mirror_display() {
   close(fb);
 
   display_software_reset();
-  display_backlight(DISPLAY_DISABLE);
+  display_brightness(0);
 }
 
 
 /// ---- Helpers ----
-
 
 int get_active_tty() {
   char name[5];
@@ -253,7 +253,7 @@ int get_x_tty() {
   return -1;
 }
 
-int map_framebuffer(uint8_t** screen_data) {
+int map_framebuffer(uint8_t** screen_data) {  
   int fb = open(FRAMEBUFFER_FILE, O_RDONLY);
   if(fb < 0) {
     fprintf(stderr, "Failed to open framebuffer, %s\n", strerror(errno));

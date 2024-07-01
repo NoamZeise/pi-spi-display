@@ -10,7 +10,7 @@ const int SPI_CHIP_ENABLE = 0;
 #define SPI_BUFFER_SIZE 65536
 
 // GPIO pins used for the other display inputs
-const int BACKLIGHT_PIN = 22;
+const int BACKLIGHT_PIN = 12;
 const int RESET_PIN = 24;
 const int DATA_COMMAND_PIN = 25;
 

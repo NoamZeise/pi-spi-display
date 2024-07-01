@@ -24,7 +24,7 @@ void test() {
 
   display_invert(DISPLAY_ENABLE);
 
-  display_backlight(DISPLAY_ENABLE);
+  display_brightness(MAX_BRIGHTNESS);
   display_on(DISPLAY_ENABLE);
   
   const int size = DISPLAY_PIXEL_COUNT * 2;

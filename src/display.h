@@ -9,6 +9,7 @@
 #define DISPLAY_HORIZONTAL 320
 #define DISPLAY_VERTICAL 240
 #define DISPLAY_PIXEL_COUNT DISPLAY_VERTICAL * DISPLAY_HORIZONTAL
+#define MAX_BRIGHTNESS 1024
 
 enum display_option {
   DISPLAY_ENABLE = 1,
@@ -25,8 +26,8 @@ void display_close();
 // perform a hardware reset, takes ~10ms
 void display_hardware_reset();
 
-// turn the backlight on or off
-void display_backlight(enum display_option option);
+// set backlight brightness (0 to 1024)
+void display_brightness(unsigned int brightness);
 
 // resets the display to default setting, takes ~5ms
 void display_software_reset();
@@ -45,6 +46,9 @@ void display_set_partial(uint16_t start, uint16_t end);
 
 // turn on full display
 void display_disable_partial();
+
+// idle mode is a low colour mode for power saving
+void display_idle_mode(enum display_option option);
 
 enum display_address_flags {
   ADDRESS_FLIP_HORIZONTAL        = 0b10000000,
