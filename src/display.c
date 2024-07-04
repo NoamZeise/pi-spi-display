@@ -7,6 +7,8 @@
 #include <errno.h>
 #include <stdlib.h> // exit
 
+#include <pthread.h>
+
 #include <wiringPi.h>
 #include <wiringPiSPI.h>
 
@@ -78,7 +80,6 @@ int display_open() {
     fprintf(stderr, "Failed to init spi: %s\n", strerror(errno));
     return -1;
   }
-  pinMode(BACKLIGHT_PIN, PWM_OUTPUT);
   display_brightness(0);
   return 0;
 }
@@ -98,10 +99,29 @@ void display_hardware_reset() {
 void display_brightness(unsigned int brightness) {
   if(brightness > MAX_BRIGHTNESS)
     brightness = MAX_BRIGHTNESS;
-  pwmSetMode(PWM_MODE_MS);
-  pwmSetClock(BRIGHTNESS_CLOCK_DIVISOR);
-  pwmSetRange(MAX_BRIGHTNESS);
-  pwmWrite(BACKLIGHT_PIN, brightness);
+  if(brightness == 0) {
+    pinMode(BACKLIGHT_PIN, OUTPUT);
+    digitalWrite(BACKLIGHT_PIN, 0);
+  } else if(brightness == MAX_BRIGHTNESS) {
+    pinMode(BACKLIGHT_PIN, OUTPUT);
+    digitalWrite(BACKLIGHT_PIN, 1);
+  } else {
+      pinMode(BACKLIGHT_PIN, PWM_OUTPUT);
+      pwmSetMode(PWM_MODE_MS);
+      pwmSetClock(BRIGHTNESS_CLOCK_DIVISOR);
+      pwmSetRange(MAX_BRIGHTNESS);
+      pwmWrite(BACKLIGHT_PIN, brightness);
+  }
+}
+
+pthread_mutex_t display_mut;
+
+void display_lock() {
+  pthread_mutex_lock(&display_mut);
+}
+
+void display_unlock() {
+  pthread_mutex_unlock(&display_mut);
 }
 
 void display_software_reset() {

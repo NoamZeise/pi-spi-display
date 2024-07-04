@@ -29,6 +29,12 @@ void display_hardware_reset();
 // set backlight brightness (0 to 1024)
 void display_brightness(unsigned int brightness);
 
+// when using multithreaded aquire the display before using
+void display_lock();
+
+// when using mutltihreaded release the display when finished
+void display_unlock();
+
 // resets the display to default setting, takes ~5ms
 void display_software_reset();
 

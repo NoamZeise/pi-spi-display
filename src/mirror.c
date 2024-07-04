@@ -92,14 +92,20 @@ void* active_screen_manager(void* info_ptr) {
     if (sleeping) {
       if (info->active != SLEEPING) {
         info->active = SLEEPING;
+	display_lock();
         display_brightness(0);
+	display_unlock();
         sleep(1); // wait for render thread to stop
+	display_lock();
 	display_sleep(DISPLAY_ENABLE);
+	display_unlock();
       }
     } else {
-      if (info->active == SLEEPING) {	
+      if (info->active == SLEEPING) {
+	display_lock();
 	display_sleep(DISPLAY_DISABLE);
         display_brightness(MAX_BRIGHTNESS);
+	display_unlock();
 	info->active = FRAMEBUFFER;
       }
       if(Xtty != -1) {
@@ -122,7 +128,9 @@ void* screen_renderer(void* info_ptr) {
       sleep(1);
     } else if(info->active == FRAMEBUFFER) {
       memcpy(screen_data, info->framebuffer, BUFF_SIZE);
+      display_lock();
       display_draw(screen_data, BUFF_SIZE, 0);
+      display_unlock();
     } else {
       //time_point t = get_time();
       if (info->display == NULL)
@@ -153,7 +161,9 @@ void* screen_renderer(void* info_ptr) {
 	    }
 	  }
 	}
+	display_lock();
 	display_draw((uint8_t*)img->data, BUFF_SIZE, 0);
+	display_unlock();
         XDestroyImage(img);
 	//print_elapsed(t);
       }
@@ -213,8 +223,10 @@ void mirror_display() {
   munmap(info.framebuffer, BUFF_SIZE);
   close(fb);
 
+  display_lock();
   display_software_reset();
   display_brightness(0);
+  display_unlock();
 }
 
 
