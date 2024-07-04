@@ -47,13 +47,15 @@ typedef struct display_state_t {
   enum display_option horizontal;
   enum display_option little_endian;
 
+  int previous_brightness;
+
   enum display_colour_format colour_format;
   int bits_per_pixel;
   // current draw area
   uint16_t column_start;
   uint16_t column_width;
   uint16_t row_start;
-  uint16_t row_width;  
+  uint16_t row_width;
 } display_state_t;
 
 static display_state_t display_state;
@@ -112,6 +114,8 @@ void display_brightness(unsigned int brightness) {
       pwmSetRange(MAX_BRIGHTNESS);
       pwmWrite(BACKLIGHT_PIN, brightness);
   }
+  if (brightness != 0)
+    display_state.previous_brightness = brightness;
 }
 
 pthread_mutex_t display_mut;
@@ -139,10 +143,13 @@ void display_sleep(enum display_option state) {
   double wait = 120 - (elapsed * 1000);
   if (wait >= 0)
     msleep(wait);
-  if (state == DISPLAY_ENABLE)
+  if (state == DISPLAY_ENABLE) {
+    display_brightness(0);
     send_command(SLEEP_IN_MODE);
-  else
+  } else {
+    display_brightness(display_state.previous_brightness);
     send_command(SLEEP_OUT_MODE);
+  }
   msleep(5);
   display_state.last_sleep_change = t;
   display_state.sleep_mode = state;
@@ -305,6 +312,8 @@ void reset_display_state() {
   display_state.little_endian = DISPLAY_DISABLE;
   display_state.colour_format = COLOUR_FORMAT_18_BIT;
   display_state.bits_per_pixel = 24;
+
+  display_state.previous_brightness = MAX_BRIGHTNESS;
   
   display_state.column_start = 0;
   display_state.column_width = 0;
